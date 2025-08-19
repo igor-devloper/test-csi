@@ -1,0 +1,106 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model faturas {
+  id                    Int       @id @default(autoincrement())
+  usina_id              Int
+  mes_referencia        String
+  data_leitura_anterior DateTime?
+  data_leitura_atual    DateTime?
+  data_proxima_leitura  DateTime?
+  consumo               Float?
+  injecao               Float?
+  saldo                 Float?
+  criado_em             DateTime  @default(now())
+  atualizado_em         DateTime
+  usinas                usinas    @relation(fields: [usina_id], references: [id], onDelete: Cascade)
+}
+
+model geracoes_diarias {
+  id            Int      @id @default(autoincrement())
+  usina_id      Int
+  data          DateTime
+  energia_kwh   Float
+  clima         String?
+  criado_em     DateTime @default(now())
+  atualizado_em DateTime
+  usinas        usinas   @relation(fields: [usina_id], references: [id], onDelete: Cascade)
+
+  @@unique([usina_id, data])
+}
+
+model grupos {
+  id             Int      @id @default(autoincrement())
+  nome           String   @unique
+  descricao      String?
+  link_rateio    String?
+  usuario_agv    String?
+  senha_agv      String?
+  criado_em      DateTime @default(now())
+  atualizado_em  DateTime
+  concessionaria String?
+  usinas         usinas[]
+}
+
+model manutencoes {
+  id                               Int       @id @default(autoincrement())
+  usina_id                         Int
+  data_manutencao                  DateTime
+  descricao_manutencao             String
+  data_previsto_proxima_manutencao DateTime?
+  ocorrencia_associada             String?
+  criado_em                        DateTime  @default(now())
+  atualizado_em                    DateTime
+  usinas                           usinas    @relation(fields: [usina_id], references: [id], onDelete: Cascade)
+}
+
+model ocorrencias {
+  id                   Int      @id @default(autoincrement())
+  usina_id             Int
+  data_ocorrencia      DateTime
+  descricao_ocorrencia String
+  gravidade            String
+  status               String
+  criado_em            DateTime @default(now())
+  atualizado_em        DateTime
+  usinas               usinas   @relation(fields: [usina_id], references: [id], onDelete: Cascade)
+}
+
+model usinas {
+  id                       Int                @id @default(autoincrement())
+  nome                     String
+  cliente                  String?
+  concessionaria           String?
+  modalidade               String?
+  relacao_tabela_usina     String?
+  nome_cliente             String?
+  potencia                 Float?
+  marca_inversor           String?
+  prazo_garantia_inversor  String?
+  link_projeto             String?
+  latitude                 Float?
+  longitude                Float?
+  numero_uc                String?
+  quantidade_modulos       Int?
+  potencia_modulos         Float?
+  data_leitura             DateTime?
+  plataforma_monitoramento String?
+  usuario_monitoramento    String?
+  senha_monitoramento      String?
+  senha_alarme             String?
+  criado_em                DateTime           @default(now())
+  atualizado_em            DateTime
+  grupo_id                 Int?
+  faturas                  faturas[]
+  geracoes_diarias         geracoes_diarias[]
+  manutencoes              manutencoes[]
+  ocorrencias              ocorrencias[]
+  grupos                   grupos?            @relation(fields: [grupo_id], references: [id])
+}
