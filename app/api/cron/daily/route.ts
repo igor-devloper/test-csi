@@ -1,6 +1,6 @@
 // app/api/cron/daily/route.ts
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
+const { prisma } = await import("@/lib/prisma");
 import { canonicalName } from "@/lib/name";
 import { yesterdayYMD } from "@/lib/date";
 import { getPrevDayKwhForSite } from "@/lib/csiEnergy";
@@ -31,7 +31,7 @@ export async function GET(req: Request) {
   const ymd = yesterdayYMD(); // "YYYY-MM-DD" (timezone já tratado no seu helper)
 
   // 1) usinas do seu banco
-  const dbUsinas: DbUsinaMinimal[] = await prisma.usina.findMany({
+  const dbUsinas: DbUsinaMinimal[] = await prisma.usinas.findMany({
     select: { id: true, nome: true },
   });
 
@@ -78,16 +78,17 @@ export async function GET(req: Request) {
   for (const m of matches) {
     try {
       const kwh = await getPrevDayKwhForSite(m.csiId, ymd); // number
-      await prisma.geracaoDiaria.upsert({
-        where: { usinaId_data: { usinaId: m.dbId, data: new Date(ymd) } },
+      await prisma.geracoes_diarias.upsert({
+        where: { usina_id_data: { usina_id: m.dbId, data: new Date(ymd) } },
         create: {
-          usinaId: m.dbId,
+          usina_id: m.dbId,
           data: new Date(ymd),
-          energiaKwh: kwh,
+          energia_kwh: kwh,
           clima: m.clima ?? null,
+          atualizado_em: new Date()
         },
         update: {
-          energiaKwh: kwh,
+          energia_kwh: kwh,
           clima: m.clima ?? null,
         },
       });
