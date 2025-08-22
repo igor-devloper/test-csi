@@ -122,7 +122,7 @@ export async function GET(req: Request) {
         await prisma.geracoes_diarias.upsert({
           where: { usina_id_data: { usina_id: m.dbId, data: new Date(ymd) } },
           create: { usina_id: m.dbId, data: new Date(ymd), energia_kwh: kwh!, clima: m.clima ?? null, atualizado_em: new Date() },
-          update: { energia_kwh: kwh!, clima: m.clima ?? null },
+          update: { energia_kwh: kwh!, clima: m.clima ?? null, atualizado_em: new Date() },
         });
         saved++;
         continue;
