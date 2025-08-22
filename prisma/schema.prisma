@@ -1,3 +1,6 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,99 +10,139 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model faturas {
-  id                    Int       @id @default(autoincrement())
-  usina_id              Int
-  mes_referencia        String
-  data_leitura_anterior DateTime?
-  data_leitura_atual    DateTime?
-  data_proxima_leitura  DateTime?
-  consumo               Float?
-  injecao               Float?
-  saldo                 Float?
-  criado_em             DateTime  @default(now())
-  atualizado_em         DateTime
-  usinas                usinas    @relation(fields: [usina_id], references: [id], onDelete: Cascade)
-}
-
-model geracoes_diarias {
-  id            Int      @id @default(autoincrement())
-  usina_id      Int
-  data          DateTime
-  energia_kwh   Float
-  clima         String?
-  criado_em     DateTime @default(now())
-  atualizado_em DateTime
-  usinas        usinas   @relation(fields: [usina_id], references: [id], onDelete: Cascade)
-
-  @@unique([usina_id, data])
-}
-
-model grupos {
-  id             Int      @id @default(autoincrement())
-  nome           String   @unique
+model Grupo {
+  id             Int     @id @default(autoincrement())
+  nome           String  @unique
   descricao      String?
-  link_rateio    String?
-  usuario_agv    String?
-  senha_agv      String?
-  criado_em      DateTime @default(now())
-  atualizado_em  DateTime
   concessionaria String?
-  usinas         usinas[]
+  linkRateio     String? @map("link_rateio")
+  usuarioAGV     String? @map("usuario_agv")
+  senhaAGV       String? @map("senha_agv")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  // Relacionamentos
+  usinas Usina[]
+
+  @@map("grupos")
 }
 
-model manutencoes {
-  id                               Int       @id @default(autoincrement())
-  usina_id                         Int
-  data_manutencao                  DateTime
-  descricao_manutencao             String
-  data_previsto_proxima_manutencao DateTime?
-  ocorrencia_associada             String?
-  criado_em                        DateTime  @default(now())
-  atualizado_em                    DateTime
-  usinas                           usinas    @relation(fields: [usina_id], references: [id], onDelete: Cascade)
+model Usina {
+  id                 Int     @id @default(autoincrement())
+  nome               String
+  cliente            String?
+  concessionaria     String?
+  modalidade         String?
+  relacaoTabelaUsina String? @map("relacao_tabela_usina")
+  grupoId            Int?    @map("grupo_id")
+
+  // Campos adicionais da tabela mais complexa
+  nomeCliente             String?   @map("nome_cliente")
+  potencia                Float?
+  marcaInversor           String?   @map("marca_inversor")
+  prazoGarantiaInversor   String?   @map("prazo_garantia_inversor")
+  linkProjeto             String?   @map("link_projeto")
+  latitude                Float?
+  longitude               Float?
+  numeroUC                String?   @map("numero_uc")
+  quantidadeModulos       Int?      @map("quantidade_modulos")
+  potenciaModulos         Float?    @map("potencia_modulos")
+  dataLeitura             DateTime? @map("data_leitura")
+  plataformaMonitoramento String?   @map("plataforma_monitoramento")
+  usuarioMonitoramento    String?   @map("usuario_monitoramento")
+  senhaMonitoramento      String?   @map("senha_monitoramento")
+  senhaAlarme             String?   @map("senha_alarme")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  // Relacionamentos
+  grupo           Grupo?          @relation(fields: [grupoId], references: [id], onDelete: SetNull)
+  manutencoes     Manutencao[]
+  faturas         Fatura[]
+  geracoesDiarias GeracaoDiaria[]
+  ocorrencias     Ocorrencia[]
+
+  @@map("usinas")
 }
 
-model ocorrencias {
-  id                   Int      @id @default(autoincrement())
-  usina_id             Int
-  data_ocorrencia      DateTime
-  descricao_ocorrencia String
-  gravidade            String
-  status               String
-  criado_em            DateTime @default(now())
-  atualizado_em        DateTime
-  usinas               usinas   @relation(fields: [usina_id], references: [id], onDelete: Cascade)
+model Manutencao {
+  id                            Int       @id @default(autoincrement())
+  usinaId                       Int       @map("usina_id")
+  dataManutencao                DateTime  @map("data_manutencao")
+  descricaoManutencao           String    @map("descricao_manutencao")
+  dataPrevistoProximaManutencao DateTime? @map("data_previsto_proxima_manutencao")
+  ocorrenciaAssociada           String?   @map("ocorrencia_associada")
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  // Relacionamentos
+  usina Usina @relation(fields: [usinaId], references: [id], onDelete: Cascade)
+
+  @@map("manutencoes")
 }
 
-model usinas {
-  id                       Int                @id @default(autoincrement())
-  nome                     String
-  cliente                  String?
-  concessionaria           String?
-  modalidade               String?
-  relacao_tabela_usina     String?
-  nome_cliente             String?
-  potencia                 Float?
-  marca_inversor           String?
-  prazo_garantia_inversor  String?
-  link_projeto             String?
-  latitude                 Float?
-  longitude                Float?
-  numero_uc                String?
-  quantidade_modulos       Int?
-  potencia_modulos         Float?
-  data_leitura             DateTime?
-  plataforma_monitoramento String?
-  usuario_monitoramento    String?
-  senha_monitoramento      String?
-  senha_alarme             String?
-  criado_em                DateTime           @default(now())
-  atualizado_em            DateTime
-  grupo_id                 Int?
-  faturas                  faturas[]
-  geracoes_diarias         geracoes_diarias[]
-  manutencoes              manutencoes[]
-  ocorrencias              ocorrencias[]
-  grupos                   grupos?            @relation(fields: [grupo_id], references: [id])
+model Fatura {
+  id                  Int       @id @default(autoincrement())
+  usinaId             Int       @map("usina_id")
+  mesReferencia       String    @map("mes_referencia")
+  dataLeituraAnterior DateTime? @map("data_leitura_anterior")
+  dataLeituraAtual    DateTime? @map("data_leitura_atual")
+  dataProximaLeitura  DateTime? @map("data_proxima_leitura")
+  consumo             Float?
+  injecao             Float?
+  saldo               Float?
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  // Relacionamentos
+  usina Usina @relation(fields: [usinaId], references: [id], onDelete: Cascade)
+
+  @@map("faturas")
+}
+
+model GeracaoDiaria {
+  id         Int      @id @default(autoincrement())
+  usinaId    Int      @map("usina_id")
+  data       DateTime
+  energiaKwh Float    @map("energia_kwh")
+  clima      String?
+
+  // --- NOVOS CAMPOS ---
+  temperaturaC          Float?   @map("temperatura_c")
+  potenciaW             Float?   @map("potencia_w")         // generationPower (W)
+  rendaDia              Float?   @map("renda_dia")          // incomeValue (BRL)
+  statusAviso           String?  @map("status_aviso")       // warningStatus
+  statusNegocio         String?  @map("status_negocio")     // businessWarningStatus
+  statusRede            String?  @map("status_rede")        // networkStatus
+  apiAtualizadoEm       DateTime? @map("api_atualizado_em") // from lastUpdateTime epoch
+  timezone              String?  @map("timezone")           // regionTimezone
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  usina Usina @relation(fields: [usinaId], references: [id], onDelete: Cascade)
+
+  @@unique([usinaId, data])
+  @@map("geracoes_diarias")
+}
+
+model Ocorrencia {
+  id                  Int      @id @default(autoincrement())
+  usinaId             Int      @map("usina_id")
+  dataOcorrencia      DateTime @map("data_ocorrencia")
+  descricaoOcorrencia String   @map("descricao_ocorrencia")
+  gravidade           String // Ex: "Baixa", "Média", "Alta", "Crítica"
+  status              String // Ex: "Aberta", "Em Andamento", "Resolvida", "Fechada"
+
+  criadoEm     DateTime @default(now()) @map("criado_em")
+  atualizadoEm DateTime @updatedAt @map("atualizado_em")
+
+  // Relacionamentos
+  usina Usina @relation(fields: [usinaId], references: [id], onDelete: Cascade)
+
+  @@map("ocorrencias")
 }
