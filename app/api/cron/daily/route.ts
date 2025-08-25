@@ -178,9 +178,9 @@ export async function GET(req: Request) {
     const kwh = (typeof snap?.eday === "number" && Number.isFinite(snap.eday)) ? snap.eday : undefined
     let potenciaW: number | null = null
     if (typeof snap?.pac === "number" && Number.isFinite(snap.pac )) {
-      potenciaW = Math.round(snap.pac)
+      potenciaW = Math.round(snap.pac * 1000)
     } else if (typeof snap?.pac === "number" && Number.isFinite(snap.pac)) {
-      potenciaW = Math.round(snap.pac)
+      potenciaW = Math.round(snap.pac * 1000)
     }
     let statusRede: string | null = null;
     if (snap?.status === 1) {
@@ -190,7 +190,6 @@ export async function GET(req: Request) {
     } else {
       statusRede = "UNKNOWN";
     }
-  
 
     const { cond, tempC } = phbExtractWeatherInfo(snap?.weather)
     try {
