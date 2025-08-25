@@ -177,7 +177,7 @@ export async function GET(req: Request) {
     const snap = phbById.get(m.phbId)
     const kwh = (typeof snap?.eday === "number" && Number.isFinite(snap.eday)) ? snap.eday : undefined
     let potenciaW: number | null = null
-    if (typeof snap?.pac_kw === "number" && Number.isFinite(snap.pac_kw)) {
+    if (typeof snap?.pac_kw === "number" && Number.isFinite(snap.pac )) {
       potenciaW = Math.round(snap.pac_kw * 1000)
     } else if (typeof snap?.pac === "number" && Number.isFinite(snap.pac)) {
       potenciaW = Math.round(snap.pac * 1000)
