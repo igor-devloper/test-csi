@@ -59,7 +59,7 @@ export async function GET(req: Request) {
   const csiItems = (await getAllSystems()) as SiteRowExt[]
   const csiById = new Map<number, SiteRowExt>(csiItems.map((i) => [i.id, i]))
 
-  const csiMatches: Array<{ dbId:number; dbNome:string; csiId:number; csiNome:string; clima?:string|null }> = []
+  const csiMatches: Array<{ dbId: number; dbNome: string; csiId: number; csiNome: string; clima?: string | null }> = []
   const csiNotFound: string[] = []
   const csiDuplicateKeys: string[] = []
   const csiSeen = new Set<string>()
@@ -87,13 +87,13 @@ export async function GET(req: Request) {
   }
 
   let savedCSI = 0
-  const perItemErrors: Array<{ source:"CSI"|"PHB"; usina:string; id:string|number; error:string; snap?:any }> = []
+  const perItemErrors: Array<{ source: "CSI" | "PHB"; usina: string; id: string | number; error: string; snap?: any }> = []
 
   for (const m of csiMatches) {
     let kwh: number | undefined
     try {
       kwh = await getPrevDayKwhForSite(m.csiId, Y, M, D, ymd)
-    } catch {}
+    } catch { }
     const snap = csiById.get(m.csiId)
     if (!Number.isFinite(kwh)) {
       const alt = snap?.generationValue ?? null
@@ -132,19 +132,19 @@ export async function GET(req: Request) {
         })
         savedCSI++
         continue
-      } catch (e:any) {
-        perItemErrors.push({ source:"CSI", usina:m.dbNome, id:m.csiId, error:e?.message||String(e), snap })
+      } catch (e: any) {
+        perItemErrors.push({ source: "CSI", usina: m.dbNome, id: m.csiId, error: e?.message || String(e), snap })
         continue
       }
     }
-    perItemErrors.push({ source:"CSI", usina:m.dbNome, id:m.csiId, error:"sem kWh", snap })
+    perItemErrors.push({ source: "CSI", usina: m.dbNome, id: m.csiId, error: "sem kWh", snap })
   }
 
   /* ========= BLOCO PHB ========= */
   const phbItems = await phbGetAllStations()
-  const phbById = new Map<string,PhbStation>(phbItems.map(s=>[s.powerstation_id,s]))
+  const phbById = new Map<string, PhbStation>(phbItems.map(s => [s.powerstation_id, s]))
 
-  const phbMatches: Array<{ dbId:number; dbNome:string; phbId:string; phbNome:string; clima?:string|null }> = []
+  const phbMatches: Array<{ dbId: number; dbNome: string; phbId: string; phbNome: string; clima?: string | null }> = []
   const phbNotFound: string[] = []
   const phbDuplicateKeys: string[] = []
   const phbSeen = new Set<string>()
@@ -175,13 +175,22 @@ export async function GET(req: Request) {
   let savedPHB = 0
   for (const m of phbMatches) {
     const snap = phbById.get(m.phbId)
-    const kwh = (typeof snap?.eday==="number" && Number.isFinite(snap.eday)) ? snap.eday : undefined
+    const kwh = (typeof snap?.eday === "number" && Number.isFinite(snap.eday)) ? snap.eday : undefined
     let potenciaW: number | null = null
-    if (typeof snap?.pac_kw==="number" && Number.isFinite(snap.pac_kw)) {
+    if (typeof snap?.pac_kw === "number" && Number.isFinite(snap.pac_kw)) {
       potenciaW = Math.round(snap.pac_kw * 1000)
-    } else if (typeof snap?.pac==="number" && Number.isFinite(snap.pac)) {
+    } else if (typeof snap?.pac === "number" && Number.isFinite(snap.pac)) {
       potenciaW = Math.round(snap.pac * 1000)
     }
+    let statusRede: string | null = null;
+    if (snap?.status === 1) {
+      statusRede = "NORMAL";
+    } else if (snap?.status === -1) {
+      statusRede = "ALL_OFFLINE";
+    } else {
+      statusRede = "UNKNOWN";
+    }
+
     const { cond, tempC } = phbExtractWeatherInfo(snap?.weather)
     try {
       await prisma.geracaoDiaria.upsert({
@@ -191,47 +200,47 @@ export async function GET(req: Request) {
           data: new Date(ymd),
           energiaKwh: kwh ?? 0,
           clima: m.clima ?? cond ?? null,
-          temperaturaC: Number.isFinite(tempC as any)?tempC!:null,
-          potenciaW: Number.isFinite(potenciaW as any)?potenciaW!:null,
-          rendaDia: (typeof snap?.eday_income==="number" && Number.isFinite(snap.eday_income))?snap.eday_income!:null,
-          statusAviso:null,
-          statusNegocio:null,
-          statusRede:null,
-          apiAtualizadoEm:new Date(),
+          temperaturaC: Number.isFinite(tempC as any) ? tempC! : null,
+          potenciaW: Number.isFinite(potenciaW as any) ? potenciaW! : null,
+          rendaDia: (typeof snap?.eday_income === "number" && Number.isFinite(snap.eday_income)) ? snap.eday_income! : null,
+          statusAviso: null,
+          statusNegocio: null,
+          statusRede,
+          apiAtualizadoEm: new Date(),
           timezone: process.env.PHB_TZ ?? process.env.CSI_TZ ?? "America/Sao_Paulo",
         },
         update: {
-          energiaKwh: Number.isFinite(kwh as any)?kwh:undefined,
+          energiaKwh: Number.isFinite(kwh as any) ? kwh : undefined,
           clima: m.clima ?? cond ?? undefined,
-          temperaturaC: Number.isFinite(tempC as any)?tempC:undefined,
-          potenciaW: Number.isFinite(potenciaW as any)?potenciaW:undefined,
-          rendaDia: (typeof snap?.eday_income==="number" && Number.isFinite(snap.eday_income))?snap.eday_income:undefined,
-          apiAtualizadoEm:new Date(),
+          temperaturaC: Number.isFinite(tempC as any) ? tempC : undefined,
+          potenciaW: Number.isFinite(potenciaW as any) ? potenciaW : undefined,
+          rendaDia: (typeof snap?.eday_income === "number" && Number.isFinite(snap.eday_income)) ? snap.eday_income : undefined,
+          apiAtualizadoEm: new Date(),
           timezone: process.env.PHB_TZ ?? undefined,
         },
       })
       savedPHB++
-    } catch(e:any) {
-      perItemErrors.push({ source:"PHB", usina:m.dbNome, id:m.phbId, error:e?.message||String(e), snap })
+    } catch (e: any) {
+      perItemErrors.push({ source: "PHB", usina: m.dbNome, id: m.phbId, error: e?.message || String(e), snap })
     }
   }
 
   return NextResponse.json({
-    ok:true,
-    date:ymd,
-    db_total:dbUsinas.length,
+    ok: true,
+    date: ymd,
+    db_total: dbUsinas.length,
     // CSI
-    csi_total:csiItems.length,
-    csi_matched:csiMatches.length,
-    csi_saved:savedCSI,
-    csi_notFound:csiNotFound,
-    csi_duplicateKeys:csiDuplicateKeys,
+    csi_total: csiItems.length,
+    csi_matched: csiMatches.length,
+    csi_saved: savedCSI,
+    csi_notFound: csiNotFound,
+    csi_duplicateKeys: csiDuplicateKeys,
     // PHB
-    phb_total:phbItems.length,
-    phb_matched:phbMatches.length,
-    phb_saved:savedPHB,
-    phb_notFound:phbNotFound,
-    phb_duplicateKeys:phbDuplicateKeys,
+    phb_total: phbItems.length,
+    phb_matched: phbMatches.length,
+    phb_saved: savedPHB,
+    phb_notFound: phbNotFound,
+    phb_duplicateKeys: phbDuplicateKeys,
     // logs
     perItemErrors,
   })
