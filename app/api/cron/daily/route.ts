@@ -4,15 +4,9 @@ import { canonicalName } from "@/lib/name"
 import { getPrevDayKwhForSite } from "@/lib/csiEnergy"
 import { getAllSystems, type SiteRow } from "@/lib/csiSites"
 
-type DbUsinaMinimal = { id: number; nome: string }
+import { phbGetAllStations, phbExtractWeatherInfo, type PhbStation } from "@/lib/phbSites"
 
-type Match = {
-  dbId: number
-  dbNome: string
-  csiId: number
-  csiNome: string
-  clima?: string | null
-}
+type DbUsinaMinimal = { id: number; nome: string }
 
 export const dynamic = "force-dynamic"
 
@@ -26,27 +20,11 @@ function todayYMDInTZ(tz = process.env.CSI_TZ || "America/Sao_Paulo") {
   }).format(new Date())
 }
 
-/** Campos extras que a API realmente retorna, mas não estão no tipo SiteRow gerado */
-type SiteRowExtra = Partial<{
-  regionTimezone: string | null
-  warningStatus: string | null
-  businessWarningStatus: string | null
-  incomeValue: number | null
-  generationPower: number | null   // W (instantâneo)
-  generationValue: number | null   // kWh no dia
-  temperature: number | null       // °C
-  lastUpdateTime: number | null    // epoch seconds
-  weather: string | null
-}>
-
-type SiteRowExt = SiteRow & SiteRowExtra
-
 /** Converte epoch seconds -> Date (ou null) */
 const fromEpochSecs = (secs?: number | null) =>
   typeof secs === "number" && Number.isFinite(secs) ? new Date(secs * 1000) : null
 
 export async function GET(req: Request) {
-  // chave opcional
   const url = new URL(req.url)
   const key = url.searchParams.get("key")
   const expected = process.env.CRON_SECRET
@@ -63,28 +41,40 @@ export async function GET(req: Request) {
   })
   const byName = new Map(dbUsinas.map((u) => [canonicalName(u.nome), u]))
 
-  // 2) usinas do portal
+  /* ========= BLOCO CSI ========= */
+  type SiteRowExtra = Partial<{
+    regionTimezone: string | null
+    warningStatus: string | null
+    businessWarningStatus: string | null
+    incomeValue: number | null
+    generationPower: number | null
+    generationValue: number | null
+    temperature: number | null
+    lastUpdateTime: number | null
+    weather: string | null
+    networkStatus: string | null
+  }>
+  type SiteRowExt = SiteRow & SiteRowExtra
+
   const csiItems = (await getAllSystems()) as SiteRowExt[]
   const csiById = new Map<number, SiteRowExt>(csiItems.map((i) => [i.id, i]))
 
-  // 3) casar por nome canônico
-  const matches: Match[] = []
-  const notFound: string[] = []
-  const duplicateKeys: string[] = []
-  const seen = new Set<string>()
+  const csiMatches: Array<{ dbId:number; dbNome:string; csiId:number; csiNome:string; clima?:string|null }> = []
+  const csiNotFound: string[] = []
+  const csiDuplicateKeys: string[] = []
+  const csiSeen = new Set<string>()
 
   for (const it of csiItems) {
     const k = canonicalName(it.name ?? "")
     if (!k) continue
-    if (seen.has(k)) {
-      duplicateKeys.push(it.name ?? `id:${it.id}`)
+    if (csiSeen.has(k)) {
+      csiDuplicateKeys.push(it.name ?? `id:${it.id}`)
       continue
     }
-    seen.add(k)
-
+    csiSeen.add(k)
     const db = byName.get(k)
     if (db) {
-      matches.push({
+      csiMatches.push({
         dbId: db.id,
         dbNome: db.nome,
         csiId: it.id,
@@ -92,32 +82,23 @@ export async function GET(req: Request) {
         clima: it.weather ?? null,
       })
     } else {
-      notFound.push(it.name ?? `id:${it.id}`)
+      csiNotFound.push(it.name ?? `id:${it.id}`)
     }
   }
 
-  // 4) salvar
-  let saved = 0
-  const perItemErrors: Array<{
-    usina: string
-    csiId: number
-    error: string
-    csi?: SiteRowExt
-  }> = []
+  let savedCSI = 0
+  const perItemErrors: Array<{ source:"CSI"|"PHB"; usina:string; id:string|number; error:string; snap?:any }> = []
 
-  for (const m of matches) {
+  for (const m of csiMatches) {
     let kwh: number | undefined
     try {
       kwh = await getPrevDayKwhForSite(m.csiId, Y, M, D, ymd)
     } catch {}
-
     const snap = csiById.get(m.csiId)
-
     if (!Number.isFinite(kwh)) {
       const alt = snap?.generationValue ?? null
       if (typeof alt === "number" && Number.isFinite(alt)) kwh = alt
     }
-
     if (Number.isFinite(kwh)) {
       try {
         await prisma.geracaoDiaria.upsert({
@@ -127,8 +108,6 @@ export async function GET(req: Request) {
             data: new Date(ymd),
             energiaKwh: kwh!,
             clima: m.clima ?? snap?.weather ?? null,
-
-            // novos campos
             temperaturaC: typeof snap?.temperature === "number" ? snap!.temperature! : null,
             potenciaW: typeof snap?.generationPower === "number" ? snap!.generationPower! : null,
             rendaDia: typeof snap?.incomeValue === "number" ? snap!.incomeValue! : null,
@@ -151,36 +130,109 @@ export async function GET(req: Request) {
             timezone: snap?.regionTimezone ?? undefined,
           },
         })
-        saved++
+        savedCSI++
         continue
-      } catch (e: any) {
-        perItemErrors.push({
-          usina: m.dbNome,
-          csiId: m.csiId,
-          error: e?.message || String(e),
-          csi: snap,
-        })
+      } catch (e:any) {
+        perItemErrors.push({ source:"CSI", usina:m.dbNome, id:m.csiId, error:e?.message||String(e), snap })
         continue
       }
     }
+    perItemErrors.push({ source:"CSI", usina:m.dbNome, id:m.csiId, error:"sem kWh", snap })
+  }
 
-    perItemErrors.push({
-      usina: m.dbNome,
-      csiId: m.csiId,
-      error: "sem kWh",
-      csi: snap,
-    })
+  /* ========= BLOCO PHB ========= */
+  const phbItems = await phbGetAllStations()
+  const phbById = new Map<string,PhbStation>(phbItems.map(s=>[s.powerstation_id,s]))
+
+  const phbMatches: Array<{ dbId:number; dbNome:string; phbId:string; phbNome:string; clima?:string|null }> = []
+  const phbNotFound: string[] = []
+  const phbDuplicateKeys: string[] = []
+  const phbSeen = new Set<string>()
+
+  for (const it of phbItems) {
+    const k = canonicalName(it.stationname ?? "")
+    if (!k) continue
+    if (phbSeen.has(k)) {
+      phbDuplicateKeys.push(it.stationname ?? `id:${it.powerstation_id}`)
+      continue
+    }
+    phbSeen.add(k)
+    const db = byName.get(k)
+    if (db) {
+      const w = phbExtractWeatherInfo(it.weather)
+      phbMatches.push({
+        dbId: db.id,
+        dbNome: db.nome,
+        phbId: it.powerstation_id,
+        phbNome: it.stationname,
+        clima: w.cond ?? null,
+      })
+    } else {
+      phbNotFound.push(it.stationname ?? `id:${it.powerstation_id}`)
+    }
+  }
+
+  let savedPHB = 0
+  for (const m of phbMatches) {
+    const snap = phbById.get(m.phbId)
+    const kwh = (typeof snap?.eday==="number" && Number.isFinite(snap.eday)) ? snap.eday : undefined
+    let potenciaW: number | null = null
+    if (typeof snap?.pac_kw==="number" && Number.isFinite(snap.pac_kw)) {
+      potenciaW = Math.round(snap.pac_kw * 1000)
+    } else if (typeof snap?.pac==="number" && Number.isFinite(snap.pac)) {
+      potenciaW = Math.round(snap.pac * 1000)
+    }
+    const { cond, tempC } = phbExtractWeatherInfo(snap?.weather)
+    try {
+      await prisma.geracaoDiaria.upsert({
+        where: { usinaId_data: { usinaId: m.dbId, data: new Date(ymd) } },
+        create: {
+          usinaId: m.dbId,
+          data: new Date(ymd),
+          energiaKwh: kwh ?? 0,
+          clima: m.clima ?? cond ?? null,
+          temperaturaC: Number.isFinite(tempC as any)?tempC!:null,
+          potenciaW: Number.isFinite(potenciaW as any)?potenciaW!:null,
+          rendaDia: (typeof snap?.eday_income==="number" && Number.isFinite(snap.eday_income))?snap.eday_income!:null,
+          statusAviso:null,
+          statusNegocio:null,
+          statusRede:null,
+          apiAtualizadoEm:new Date(),
+          timezone: process.env.PHB_TZ ?? process.env.CSI_TZ ?? "America/Sao_Paulo",
+        },
+        update: {
+          energiaKwh: Number.isFinite(kwh as any)?kwh:undefined,
+          clima: m.clima ?? cond ?? undefined,
+          temperaturaC: Number.isFinite(tempC as any)?tempC:undefined,
+          potenciaW: Number.isFinite(potenciaW as any)?potenciaW:undefined,
+          rendaDia: (typeof snap?.eday_income==="number" && Number.isFinite(snap.eday_income))?snap.eday_income:undefined,
+          apiAtualizadoEm:new Date(),
+          timezone: process.env.PHB_TZ ?? undefined,
+        },
+      })
+      savedPHB++
+    } catch(e:any) {
+      perItemErrors.push({ source:"PHB", usina:m.dbNome, id:m.phbId, error:e?.message||String(e), snap })
+    }
   }
 
   return NextResponse.json({
-    ok: true,
-    date: ymd,
-    db_total: dbUsinas.length,
-    csi_total: csiItems.length,
-    matched: matches.length,
-    saved,
-    notFound,
-    duplicateKeys,
+    ok:true,
+    date:ymd,
+    db_total:dbUsinas.length,
+    // CSI
+    csi_total:csiItems.length,
+    csi_matched:csiMatches.length,
+    csi_saved:savedCSI,
+    csi_notFound:csiNotFound,
+    csi_duplicateKeys:csiDuplicateKeys,
+    // PHB
+    phb_total:phbItems.length,
+    phb_matched:phbMatches.length,
+    phb_saved:savedPHB,
+    phb_notFound:phbNotFound,
+    phb_duplicateKeys:phbDuplicateKeys,
+    // logs
     perItemErrors,
   })
 }
