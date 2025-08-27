@@ -275,6 +275,7 @@ export async function GET(req: Request) {
     // status de rede: 1 online -> NORMAL; outros -> ALL_OFFLINE/UNKNOWN
     let statusRede: string | null = null;
     if (snap?.status === 1) statusRede = "NORMAL";
+    if (snap?.status === 2) statusRede = "NORMAL";
     else if (typeof snap?.status === "number") statusRede = "ALL_OFFLINE";
     else statusRede = "UNKNOWN";
 
