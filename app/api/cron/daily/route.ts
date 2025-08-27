@@ -192,6 +192,10 @@ export async function GET(req: Request) {
       statusRede = "UNKNOWN";
     }
 
+    if (snap?.status == 2){
+      statusRede == "ALERTING"
+    } 
+
     const { cond, tempC } = phbExtractWeatherInfo(snap?.weather)
     try {
       await prisma.geracaoDiaria.upsert({
@@ -204,7 +208,7 @@ export async function GET(req: Request) {
           temperaturaC: Number.isFinite(tempC as any) ? tempC! : null,
           potenciaW: Number.isFinite(potenciaW as any) ? potenciaW! : null,
           rendaDia: (typeof snap?.eday_income === "number" && Number.isFinite(snap.eday_income)) ? snap.eday_income! : null,
-          statusAviso: null,
+          statusAviso: statusRede,
           statusNegocio: null,
           statusRede,
           apiAtualizadoEm: new Date(),
