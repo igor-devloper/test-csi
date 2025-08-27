@@ -6,6 +6,7 @@ import { getAllSystems, type SiteRow } from "@/lib/csiSites"
 
 import { phbGetAllStations, phbExtractWeatherInfo, type PhbStation } from "@/lib/phbSites"
 import { sepGetAllPlants, SepPlant } from "@/lib/sepPlants"
+import { growattGetAllPlants, GrowattPlant } from "@/lib/growattPlants"
 
 type DbUsinaMinimal = { id: number; nome: string }
 
@@ -88,7 +89,7 @@ export async function GET(req: Request) {
   }
 
   let savedCSI = 0
-  const perItemErrors: Array<{ source: "CSI" | "PHB" | "SEP"; usina: string; id: string | number; error: string; snap?: any }> = []
+  const perItemErrors: Array<{ source: "CSI" | "PHB" | "SEP" | "GRT"; usina: string; id: string | number; error: string; snap?: any }> = []
 
   for (const m of csiMatches) {
     let kwh: number | undefined
@@ -337,6 +338,95 @@ export async function GET(req: Request) {
     }
   }
 
+  /* ========= BLOCO GROWATT ========= */
+  const growattItems = await growattGetAllPlants();
+  const growattById = new Map<string, GrowattPlant>(growattItems.map(p => [p.id, p]));
+
+  const growattMatches: Array<{ dbId: number; dbNome: string; groId: string; groNome: string }> = [];
+  const growattNotFound: string[] = [];
+  const growattDuplicateKeys: string[] = [];
+  const growattSeen = new Set<string>();
+
+  for (const it of growattItems) {
+    const k = canonicalName(it.plantName ?? "");
+    if (!k) continue;
+    if (growattSeen.has(k)) {
+      growattDuplicateKeys.push(it.plantName ?? `id:${it.id}`);
+      continue;
+    }
+    growattSeen.add(k);
+    const db = byName.get(k);
+    if (db) {
+      growattMatches.push({ dbId: db.id, dbNome: db.nome, groId: it.id, groNome: it.plantName });
+    } else {
+      growattNotFound.push(it.plantName ?? `id:${it.id}`);
+    }
+  }
+
+  let savedGRO = 0;
+
+  for (const m of growattMatches) {
+    const snap = growattById.get(m.groId);
+
+    // kWh: eToday é string
+    const kwh = snap?.eToday != null ? Number(snap.eToday) : undefined;
+    const energiaKwh = Number.isFinite(kwh as any) ? (kwh as number) : 0;
+
+    // Potência: currentPac é kW string -> W
+    let potenciaW: number | null = null;
+    if (snap?.currentPac != null) {
+      const pac = Number(snap.currentPac);
+      if (Number.isFinite(pac)) potenciaW = Math.round(pac * 1000);
+    }
+
+    // Status: se onlineNum > 0, consideramos NORMAL
+    let statusRede: string | null = null;
+    if (snap?.onlineNum != null) {
+      const on = Number(snap.onlineNum);
+      statusRede = Number.isFinite(on) && on > 0 ? "NORMAL" : "ALL_OFFLINE";
+    } else {
+      statusRede = "UNKNOWN";
+    }
+
+    try {
+      await prisma.geracaoDiaria.upsert({
+        where: { usinaId_data: { usinaId: m.dbId, data: new Date(ymd) } },
+        create: {
+          usinaId: m.dbId,
+          data: new Date(ymd),
+          energiaKwh,
+          clima: null,                // Growatt não traz clima nessa rota
+          temperaturaC: null,
+          potenciaW,
+          rendaDia: null,
+          statusAviso: "NORMAL",
+          statusNegocio: "NORMAL",
+          statusRede,
+          apiAtualizadoEm: new Date(),
+          timezone: process.env.GROWATT_TZ ?? process.env.CSI_TZ ?? "America/Sao_Paulo",
+        },
+        update: {
+          energiaKwh: energiaKwh || undefined,
+          potenciaW: Number.isFinite(potenciaW as any) ? (potenciaW as number) : undefined,
+          statusAviso: "NORMAL",
+          statusNegocio: "NORMAL",
+          statusRede,
+          apiAtualizadoEm: new Date(),
+          timezone: process.env.GROWATT_TZ ?? undefined,
+        },
+      });
+      savedGRO++;
+    } catch (e: any) {
+      perItemErrors.push({
+        source: "GRT", // se você quiser separar, use "GROWATT"
+        usina: m.dbNome,
+        id: m.groId,
+        error: e?.message || String(e),
+        snap,
+      });
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     date: ymd,
@@ -359,6 +449,11 @@ export async function GET(req: Request) {
     sep_saved: savedSEP,
     sep_notFound: sepNotFound,
     sep_duplicateKeys: sepDuplicateKeys,
+    growatt_total: growattItems.length,
+    growatt_matched: growattMatches.length,
+    growatt_saved: savedGRO,
+    growatt_notFound: growattNotFound,
+    growatt_duplicateKeys: growattDuplicateKeys,
     // logs
     perItemErrors,
   })
