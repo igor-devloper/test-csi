@@ -173,30 +173,31 @@ export async function GET(req: Request) {
     }
   }
 
+  function mapPhbStatuses(status?: number | null): { statusRede: string | null; statusAviso: string | null } {
+    if (status === 1) return { statusRede: "NORMAL", statusAviso: "NORMAL" }
+    if (status === -1) return { statusRede: "ALL_OFFLINE", statusAviso: "NORMAL" }
+    if (status === 2) return { statusRede: "ALL_OFFLINE", statusAviso: "ALERTING" }
+    return { statusRede: null, statusAviso: null }
+  }
+
   let savedPHB = 0
   for (const m of phbMatches) {
     const snap = phbById.get(m.phbId)
-    const kwh = (typeof snap?.eday === "number" && Number.isFinite(snap.eday)) ? snap.eday : undefined
+
+    const kwh =
+      (typeof snap?.eday === "number" && Number.isFinite(snap.eday)) ? snap.eday : undefined
+
+    // potenciaW: pac -> arredonda para inteiro
     let potenciaW: number | null = null
     if (typeof snap?.pac === "number" && Number.isFinite(snap.pac)) {
       potenciaW = Math.round(snap.pac)
-    } else if (typeof snap?.pac === "number" && Number.isFinite(snap.pac)) {
-      potenciaW = Math.round(snap.pac)
-    }
-    let statusRede: string | null = null;
-    if (snap?.status === 1) {
-      statusRede = "NORMAL";
-    } else if (snap?.status === -1) {
-      statusRede = "ALL_OFFLINE";
-    } else {
-      statusRede = "UNKNOWN";
     }
 
-    if (snap?.status == 2){
-      statusRede == "ALERTING"
-    } 
+    // mapeamento status -> statusRede/statusAviso
+    const { statusRede, statusAviso } = mapPhbStatuses(snap?.status)
 
     const { cond, tempC } = phbExtractWeatherInfo(snap?.weather)
+
     try {
       await prisma.geracaoDiaria.upsert({
         where: { usinaId_data: { usinaId: m.dbId, data: new Date(ymd) } },
@@ -208,9 +209,9 @@ export async function GET(req: Request) {
           temperaturaC: Number.isFinite(tempC as any) ? tempC! : null,
           potenciaW: Number.isFinite(potenciaW as any) ? potenciaW! : null,
           rendaDia: (typeof snap?.eday_income === "number" && Number.isFinite(snap.eday_income)) ? snap.eday_income! : null,
-          statusAviso: statusRede,
+          statusAviso,            // 👈 salva também aqui
           statusNegocio: null,
-          statusRede,
+          statusRede,             // 👈 e aqui
           apiAtualizadoEm: new Date(),
           timezone: process.env.PHB_TZ ?? process.env.CSI_TZ ?? "America/Sao_Paulo",
         },
@@ -220,6 +221,8 @@ export async function GET(req: Request) {
           temperaturaC: Number.isFinite(tempC as any) ? tempC : undefined,
           potenciaW: Number.isFinite(potenciaW as any) ? potenciaW : undefined,
           rendaDia: (typeof snap?.eday_income === "number" && Number.isFinite(snap.eday_income)) ? snap.eday_income : undefined,
+          statusAviso,            // 👈 mantém atualizado
+          statusRede,             // 👈 mantém atualizado
           apiAtualizadoEm: new Date(),
           timezone: process.env.PHB_TZ ?? undefined,
         },
@@ -305,7 +308,7 @@ export async function GET(req: Request) {
           rendaDia: null,      // não vem receita nessa rota
           statusAviso: "NORMAL",
           statusNegocio: "NORMAL",
-          statusRede,
+          statusRede: snap?.statusName,
           apiAtualizadoEm: apiTime,
           timezone: snap?.timeZone ?? process.env.SEP_TZ ?? process.env.CSI_TZ ?? "America/Sao_Paulo",
         },
@@ -317,7 +320,7 @@ export async function GET(req: Request) {
           rendaDia: undefined,
           statusAviso: "NORMAL",
           statusNegocio: "NORMAL",
-          statusRede,
+          statusRede: snap?.statusName,
           apiAtualizadoEm: apiTime,
           timezone: snap?.timeZone ?? undefined,
         },
