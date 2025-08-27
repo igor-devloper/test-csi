@@ -5,6 +5,7 @@ import { getPrevDayKwhForSite } from "@/lib/csiEnergy"
 import { getAllSystems, type SiteRow } from "@/lib/csiSites"
 
 import { phbGetAllStations, phbExtractWeatherInfo, type PhbStation } from "@/lib/phbSites"
+import { sepGetAllPlants, SepPlant } from "@/lib/sepPlants"
 
 type DbUsinaMinimal = { id: number; nome: string }
 
@@ -87,7 +88,7 @@ export async function GET(req: Request) {
   }
 
   let savedCSI = 0
-  const perItemErrors: Array<{ source: "CSI" | "PHB"; usina: string; id: string | number; error: string; snap?: any }> = []
+  const perItemErrors: Array<{ source: "CSI" | "PHB" | "SEP"; usina: string; id: string | number; error: string; snap?: any }> = []
 
   for (const m of csiMatches) {
     let kwh: number | undefined
@@ -177,7 +178,7 @@ export async function GET(req: Request) {
     const snap = phbById.get(m.phbId)
     const kwh = (typeof snap?.eday === "number" && Number.isFinite(snap.eday)) ? snap.eday : undefined
     let potenciaW: number | null = null
-    if (typeof snap?.pac === "number" && Number.isFinite(snap.pac )) {
+    if (typeof snap?.pac === "number" && Number.isFinite(snap.pac)) {
       potenciaW = Math.round(snap.pac)
     } else if (typeof snap?.pac === "number" && Number.isFinite(snap.pac)) {
       potenciaW = Math.round(snap.pac)
@@ -225,6 +226,109 @@ export async function GET(req: Request) {
     }
   }
 
+  const sepItems = await sepGetAllPlants();
+  const sepById = new Map<string | number, SepPlant>(sepItems.map(p => [p.plantId, p]));
+
+  // casamento por nome canônico
+  const sepMatches: Array<{ dbId: number; dbNome: string; sepId: string | number; sepNome: string; clima?: string | null }> = [];
+  const sepNotFound: string[] = [];
+  const sepDuplicateKeys: string[] = [];
+  const sepSeen = new Set<string>();
+
+  for (const it of sepItems) {
+    const k = canonicalName(it.plantName ?? "");
+    if (!k) continue;
+    if (sepSeen.has(k)) {
+      sepDuplicateKeys.push(it.plantName ?? `id:${it.plantId}`);
+      continue;
+    }
+    sepSeen.add(k);
+
+    const db = byName.get(k);
+    if (db) {
+      sepMatches.push({
+        dbId: db.id,
+        dbNome: db.nome,
+        sepId: it.plantId,
+        sepNome: it.plantName,
+        clima: it.weatherLabel ?? null,
+      });
+    } else {
+      sepNotFound.push(it.plantName ?? `id:${it.plantId}`);
+    }
+  }
+
+  let savedSEP = 0;
+
+  for (const m of sepMatches) {
+    const snap = sepById.get(m.sepId);
+
+    // kWh do dia
+    const kwh = (typeof snap?.dayElectric === "number" && Number.isFinite(snap.dayElectric!)) ? snap!.dayElectric! : undefined;
+
+    // potência: realTimePower (kW) -> W
+    let potenciaW: number | null = null;
+    if (typeof snap?.realTimePower === "number" && Number.isFinite(snap.realTimePower!)) {
+      potenciaW = Math.round(snap!.realTimePower! * 1000);
+    }
+
+    // status de rede: 1 online -> NORMAL; outros -> ALL_OFFLINE/UNKNOWN
+    let statusRede: string | null = null;
+    if (snap?.status === 1) statusRede = "NORMAL";
+    else if (typeof snap?.status === "number") statusRede = "ALL_OFFLINE";
+    else statusRede = "UNKNOWN";
+
+    // clima: weatherLabel já vem em PT (ex.: “Nuvens quebradas”)
+    const clima = snap?.weatherLabel ?? m.clima ?? null;
+
+    // timestamp: usa o lastReportTime (com offset) se vier; senão Origin; senão now()
+    const apiTime =
+      (snap?.lastReportTime && new Date(snap.lastReportTime)) ||
+      (snap?.lastReportTimeOrigin && new Date(snap.lastReportTimeOrigin)) ||
+      new Date();
+
+    try {
+      await prisma.geracaoDiaria.upsert({
+        where: { usinaId_data: { usinaId: m.dbId, data: new Date(ymd) } },
+        create: {
+          usinaId: m.dbId,
+          data: new Date(ymd),
+          energiaKwh: kwh ?? 0,
+          clima,
+          temperaturaC: null, // SEP não traz temp nessa rota
+          potenciaW: Number.isFinite(potenciaW as any) ? (potenciaW as number) : null,
+          rendaDia: null,      // não vem receita nessa rota
+          statusAviso: "NORMAL",
+          statusNegocio: "NORMAL",
+          statusRede,
+          apiAtualizadoEm: apiTime,
+          timezone: snap?.timeZone ?? process.env.SEP_TZ ?? process.env.CSI_TZ ?? "America/Sao_Paulo",
+        },
+        update: {
+          energiaKwh: Number.isFinite(kwh as any) ? (kwh as number) : undefined,
+          clima: clima ?? undefined,
+          temperaturaC: null,
+          potenciaW: Number.isFinite(potenciaW as any) ? (potenciaW as number) : undefined,
+          rendaDia: undefined,
+          statusAviso: "NORMAL",
+          statusNegocio: "NORMAL",
+          statusRede,
+          apiAtualizadoEm: apiTime,
+          timezone: snap?.timeZone ?? undefined,
+        },
+      });
+      savedSEP++;
+    } catch (e: any) {
+      perItemErrors.push({
+        source: "SEP",
+        usina: m.dbNome,
+        id: String(m.sepId),
+        error: e?.message || String(e),
+        snap,
+      });
+    }
+  }
+
   return NextResponse.json({
     ok: true,
     date: ymd,
@@ -241,6 +345,12 @@ export async function GET(req: Request) {
     phb_saved: savedPHB,
     phb_notFound: phbNotFound,
     phb_duplicateKeys: phbDuplicateKeys,
+    // SEP
+    sep_total: sepItems.length,
+    sep_matched: sepMatches.length,
+    sep_saved: savedSEP,
+    sep_notFound: sepNotFound,
+    sep_duplicateKeys: sepDuplicateKeys,
     // logs
     perItemErrors,
   })
